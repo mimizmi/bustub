@@ -232,21 +232,25 @@ auto BufferPoolManager::CheckedWritePage(page_id_t page_id, AccessType access_ty
     if (!frames_.empty()) {
       auto frame = frames_[free_frames_.back()];
       free_frames_.pop_back();
+      if (frame->is_dirty_) {
+        disk_scheduler_->Schedule({true, frame->GetDataMut(), frame->page_id_, {}});
+      }
+      frame->Reset();
       frame->pin_count_++;
       frame->rwlatch_.lock();
       frame->page_id_ = page_id;
       page_table_[page_id] = frame->frame_id_;
-      disk_scheduler_->Schedule({true, frame->GetDataMut(), page_id, {}});
+      disk_scheduler_->Schedule({false, frame->GetDataMut(), page_id, {}});
       return WritePageGuard(page_id, frame, replacer_, bpm_latch_, disk_scheduler_);
     } else {
       if (auto frame_id = replacer_->Evict()) {
         auto frame = frames_[frame_id.value()];
         if (frame->is_dirty_) {
-          disk_scheduler_->Schedule({true, frame->GetDataMut(), page_id, {}});
+          disk_scheduler_->Schedule({true, frame->GetDataMut(), frame->page_id_, {}});
         }
         page_table_.erase(frame->page_id_);
         frame->Reset();
-        frame->page_id_++;
+        frame->pin_count_++;
         frame->rwlatch_.lock();
         frame->page_id_ = page_id;
         page_table_[page_id] = frame->frame_id_;
@@ -292,6 +296,10 @@ auto BufferPoolManager::CheckedReadPage(page_id_t page_id, AccessType access_typ
     if (!free_frames_.empty()) {
       auto frame = frames_[free_frames_.back()];
       free_frames_.pop_back();
+      if (frame->is_dirty_) {
+        disk_scheduler_->Schedule({true, frame->GetDataMut(), frame->page_id_, {}});
+      }
+      frame->Reset();
       frame->pin_count_++;
       frame->rwlatch_.lock_shared();
       frame->page_id_ = page_id;
@@ -304,7 +312,7 @@ auto BufferPoolManager::CheckedReadPage(page_id_t page_id, AccessType access_typ
       if (auto frame_id = replacer_->Evict()) {
         auto frame = frames_[frame_id.value()];
         if (frame->is_dirty_) {
-          disk_scheduler_->Schedule({false, frame->GetDataMut(), page_id, {}});
+          disk_scheduler_->Schedule({true, frame->GetDataMut(), frame->page_id_, {}});
         }
         page_table_.erase(frame->page_id_);
         frame->Reset();
