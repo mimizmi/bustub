@@ -11,9 +11,13 @@
 //===----------------------------------------------------------------------===//
 
 #include "buffer/buffer_pool_manager.h"
+#include <mutex>
+#include <optional>
+#include <shared_mutex>
 #include "buffer/arc_replacer.h"
 #include "common/config.h"
 #include "common/macros.h"
+#include "storage/page/page_guard.h"
 
 namespace bustub {
 
@@ -117,7 +121,25 @@ auto BufferPoolManager::Size() const -> size_t { return num_frames_; }
  *
  * @return The page ID of the newly allocated page.
  */
-auto BufferPoolManager::NewPage() -> page_id_t { UNIMPLEMENTED("TODO(P1): Add implementation."); }
+auto BufferPoolManager::NewPage() -> page_id_t {
+  // fetch_add == ++;
+  page_id_t np_id = next_page_id_.fetch_add(1);
+  std::scoped_lock latch(*bpm_latch_);
+  frame_id_t frame_id;
+  if (!free_frames_.empty()) {
+    frame_id = free_frames_.back();
+    free_frames_.pop_back();
+  } else {
+    auto victim = replacer_->Evict();
+    if (!victim.has_value()) {
+      return INVALID_PAGE_ID;
+    }
+    frame_id = *victim;
+  }
+  frames_[frame_id]->Reset();
+  page_table_[np_id] = frame_id;
+  return np_id;
+}
 
 /**
  * @brief Removes a page from the database, both on disk and in memory.
@@ -138,7 +160,18 @@ auto BufferPoolManager::NewPage() -> page_id_t { UNIMPLEMENTED("TODO(P1): Add im
  * @param page_id The page ID of the page we want to delete.
  * @return `false` if the page exists but could not be deleted, `true` if the page didn't exist or deletion succeeded.
  */
-auto BufferPoolManager::DeletePage(page_id_t page_id) -> bool { UNIMPLEMENTED("TODO(P1): Add implementation."); }
+auto BufferPoolManager::DeletePage(page_id_t page_id) -> bool {
+  if (page_table_.find(page_id) == page_table_.end()) {
+    return true;
+  }
+  bpm_latch_->lock();
+  auto frame = frames_[page_table_[page_id]];
+  if (frame->pin_count_ > 0) return false;
+  // TODO find all places have page cache;
+  // and remove them;
+  bpm_latch_->unlock();
+  return true;
+}
 
 /**
  * @brief Acquires an optional write-locked guard over a page of data. The user can specify an `AccessType` if needed.
@@ -180,7 +213,7 @@ auto BufferPoolManager::DeletePage(page_id_t page_id) -> bool { UNIMPLEMENTED("T
  * returns `std::nullopt`; otherwise, returns a `WritePageGuard` ensuring exclusive and mutable access to a page's data.
  */
 auto BufferPoolManager::CheckedWritePage(page_id_t page_id, AccessType access_type) -> std::optional<WritePageGuard> {
-  UNIMPLEMENTED("TODO(P1): Add implementation.");
+  return std::nullopt;
 }
 
 /**
@@ -208,7 +241,34 @@ auto BufferPoolManager::CheckedWritePage(page_id_t page_id, AccessType access_ty
  * returns `std::nullopt`; otherwise, returns a `ReadPageGuard` ensuring shared and read-only access to a page's data.
  */
 auto BufferPoolManager::CheckedReadPage(page_id_t page_id, AccessType access_type) -> std::optional<ReadPageGuard> {
-  UNIMPLEMENTED("TODO(P1): Add implementation.");
+  std::shared_lock latch(*bpm_latch_);
+  if (page_table_.find(page_id) != page_table_.end()) {
+    auto frame = frames_[page_table_[page_id]];
+    frame->pin_count_++;
+    frame->rwlatch_.lock_shared();
+    return ReadPageGuard(page_id, frame, replacer_, bpm_latch_, disk_scheduler_);
+  } else {
+    if (!free_frames_.empty()) {
+      auto frame = frames_[free_frames_.back()];
+      free_frames_.pop_back();
+      frame->Reset();
+      frame->pin_count_++;
+      frame->rwlatch_.lock_shared();
+      page_table_[page_id] = frame->frame_id_;
+      return ReadPageGuard(page_id, frame, replacer_, bpm_latch_, disk_scheduler_);
+    } else {
+      if (auto frame_id = replacer_->Evict()) {
+        auto frame = frames_[frame_id.value()];
+        frame->Reset();
+        frame->pin_count_++;
+        frame->rwlatch_.lock_shared();
+        page_table_[page_id] = frame->frame_id_;
+        return ReadPageGuard(page_id, frame, replacer_, bpm_latch_, disk_scheduler_);
+      }
+      return std::nullopt;
+    }
+  }
+  return std::nullopt;
 }
 
 /**

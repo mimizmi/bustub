@@ -34,6 +34,7 @@ struct FrameStatus {
   frame_id_t frame_id_;
   bool evictable_;
   ArcStatus arc_status_;
+  std::list<frame_id_t>::iterator iter_;
   FrameStatus(page_id_t pid, frame_id_t fid, bool ev, ArcStatus st)
       : page_id_(pid), frame_id_(fid), evictable_(ev), arc_status_(st) {}
 };
@@ -85,6 +86,9 @@ class ArcReplacer {
   std::mutex latch_;
 
   // TODO(student): You can add member variables / functions as you like.
+  std::optional<frame_id_t> TryEvict(std::list<frame_id_t> &list, std::list<page_id_t> &ghost_list, std::unordered_map<page_id_t, std::list<page_id_t>::iterator> &ghost_map);
+  std::unordered_map<page_id_t, std::list<page_id_t>::iterator> mru_ghost_map;
+  std::unordered_map<page_id_t, std::list<page_id_t>::iterator> mfu_ghost_map;
 };
 
 }  // namespace bustub

@@ -16,6 +16,8 @@
 #include <functional>
 #include <utility>
 #include <vector>
+#include <queue>
+#include <atomic>
 
 #include "common/util/hash_util.h"
 
@@ -79,13 +81,17 @@ class CountMinSketch {
   auto TopK(uint16_t k, const std::vector<KeyType> &candidates) -> std::vector<std::pair<KeyType, uint32_t>>;
 
  private:
+  inline size_t Pos(size_t row, size_t col) const {
+    return row * width_ + col;
+  }
   /** Dimensions of the count-min sketch matrix */
   uint32_t width_;  // Number of buckets for each hash function
   uint32_t depth_;  // Number of independent hash functions
   /** Pre-computed hash functions for each row */
   std::vector<std::function<size_t(const KeyType &)>> hash_functions_;
+  std::unique_ptr<std::atomic<uint32_t>[]> sketch_;
 
-  /** @spring2026 PLEASE DO NOT MODIFY THE FOLLOWING */
+  /** @fall2025 PLEASE DO NOT MODIFY THE FOLLOWING */
   constexpr static size_t SEED_BASE = 15445;
 
   /**
