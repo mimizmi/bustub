@@ -42,8 +42,11 @@ void DiskScheduler::Schedule(std::vector<DiskRequest> &requests) {
   for (auto &req : requests) {
     request_queue_.Put(std::move(req));
   }
+
   requests.clear();
 }
+
+void DiskScheduler::Schedule(DiskRequest req) { request_queue_.Put(std::move(req)); }
 
 /**
  * TODO(P1): Add implementation

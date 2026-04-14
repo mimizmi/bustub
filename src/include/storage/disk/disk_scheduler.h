@@ -56,6 +56,7 @@ class DiskScheduler {
   ~DiskScheduler();
 
   void Schedule(std::vector<DiskRequest> &requests);
+  void Schedule(DiskRequest req);
 
   void StartWorkerThread();
 
