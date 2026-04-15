@@ -11,6 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "buffer/buffer_pool_manager.h"
+#include <algorithm>
 #include <mutex>
 #include <optional>
 #include <shared_mutex>
@@ -170,15 +171,16 @@ auto BufferPoolManager::NewPage() -> page_id_t {
  * @return `false` if the page exists but could not be deleted, `true` if the page didn't exist or deletion succeeded.
  */
 auto BufferPoolManager::DeletePage(page_id_t page_id) -> bool {
+  std::scoped_lock latch(*bpm_latch_);
   if (page_table_.find(page_id) == page_table_.end()) {
     return true;
   }
-  bpm_latch_->lock();
   auto frame = frames_[page_table_[page_id]];
   if (frame->pin_count_ > 0) return false;
-  // TODO find all places have page cache;
-  // and remove them;
-  bpm_latch_->unlock();
+  disk_scheduler_->DeallocatePage(page_id);
+  frame->Reset();
+  page_table_.erase(page_id);
+  free_frames_.push_back(frame->frame_id_);
   return true;
 }
 
@@ -426,7 +428,7 @@ auto BufferPoolManager::FlushPageUnsafe(page_id_t page_id) -> bool {
  */
 auto BufferPoolManager::FlushPage(page_id_t page_id) -> bool {
   std::scoped_lock latch(*bpm_latch_);
-  if (page_table_.find(page_id) != page_table_.end()) return false;
+  if (page_table_.find(page_id) == page_table_.end()) return false;
   auto frame = frames_[page_table_[page_id]];
   if (frame->is_dirty_) {
     disk_scheduler_->Schedule({true, frame->GetDataMut(), page_id, {}});
@@ -447,7 +449,15 @@ auto BufferPoolManager::FlushPage(page_id_t page_id) -> bool {
  *
  * TODO(P1): Add implementation
  */
-void BufferPoolManager::FlushAllPagesUnsafe() { UNIMPLEMENTED("TODO(P1): Add implementation."); }
+void BufferPoolManager::FlushAllPagesUnsafe() {
+  std::vector<DiskRequest> req;
+  for (auto &frame : frames_) {
+    if (frame->is_dirty_) {
+      req.push_back({true, frame->GetDataMut(), frame->page_id_, {}});
+    }
+  }
+  if (!req.empty()) disk_scheduler_->Schedule(req);
+}
 
 /**
  * @brief Flushes all page data that is in memory to disk safely.
@@ -461,7 +471,16 @@ void BufferPoolManager::FlushAllPagesUnsafe() { UNIMPLEMENTED("TODO(P1): Add imp
  *
  * TODO(P1): Add implementation
  */
-void BufferPoolManager::FlushAllPages() { UNIMPLEMENTED("TODO(P1): Add implementation."); }
+void BufferPoolManager::FlushAllPages() {
+  std::scoped_lock latch(*bpm_latch_);
+  std::vector<DiskRequest> req;
+  for (auto &frame : frames_) {
+    if (frame->is_dirty_) {
+      req.push_back({true, frame->GetDataMut(), frame->page_id_, {}});
+    }
+  }
+  if (!req.empty()) disk_scheduler_->Schedule(req);
+}
 
 /**
  * @brief Retrieves the pin count of a page. If the page does not exist in memory, return `std::nullopt`.
