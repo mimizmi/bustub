@@ -148,6 +148,7 @@ auto BufferPoolManager::NewPage() -> page_id_t {
   frames_[frame_id]->Reset();
   frames_[frame_id]->page_id_ = np_id;
   page_table_[np_id] = frame_id;
+  replacer_->RecordAccess(frame_id, np_id);
   return np_id;
 }
 
@@ -178,6 +179,7 @@ auto BufferPoolManager::DeletePage(page_id_t page_id) -> bool {
   auto frame = frames_[page_table_[page_id]];
   if (frame->pin_count_ > 0) return false;
   disk_scheduler_->DeallocatePage(page_id);
+  replacer_->Remove(frame->frame_id_);
   frame->Reset();
   page_table_.erase(page_id);
   free_frames_.push_back(frame->frame_id_);
@@ -229,6 +231,7 @@ auto BufferPoolManager::CheckedWritePage(page_id_t page_id, AccessType access_ty
     auto frame = frames_[page_table_[page_id]];
     frame->pin_count_++;
     frame->rwlatch_.lock();
+    replacer_->RecordAccess(frame->frame_id_, frame->page_id_);
     return WritePageGuard(page_id, frame, replacer_, bpm_latch_, disk_scheduler_);
   } else {
     if (!frames_.empty()) {
@@ -293,6 +296,7 @@ auto BufferPoolManager::CheckedReadPage(page_id_t page_id, AccessType access_typ
     auto frame = frames_[page_table_[page_id]];
     frame->pin_count_++;
     frame->rwlatch_.lock_shared();
+    replacer_->RecordAccess(frame->frame_id_, frame->page_id_);
     return ReadPageGuard(page_id, frame, replacer_, bpm_latch_, disk_scheduler_);
   } else {
     if (!free_frames_.empty()) {
