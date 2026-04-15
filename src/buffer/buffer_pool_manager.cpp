@@ -397,7 +397,14 @@ auto BufferPoolManager::ReadPage(page_id_t page_id, AccessType access_type) -> R
  * @param page_id The page ID of the page to be flushed.
  * @return `false` if the page could not be found in the page table; otherwise, `true`.
  */
-auto BufferPoolManager::FlushPageUnsafe(page_id_t page_id) -> bool { UNIMPLEMENTED("TODO(P1): Add implementation."); }
+auto BufferPoolManager::FlushPageUnsafe(page_id_t page_id) -> bool {
+  if (page_table_.find(page_id) == page_table_.end()) return false;
+  auto frame = frames_[page_table_[page_id]];
+  if (frame->is_dirty_) {
+    disk_scheduler_->Schedule({true, frame->GetDataMut(), page_id, {}});
+  }
+  return true;
+}
 
 /**
  * @brief Flushes a page's data out to disk safely.
@@ -417,7 +424,15 @@ auto BufferPoolManager::FlushPageUnsafe(page_id_t page_id) -> bool { UNIMPLEMENT
  * @param page_id The page ID of the page to be flushed.
  * @return `false` if the page could not be found in the page table; otherwise, `true`.
  */
-auto BufferPoolManager::FlushPage(page_id_t page_id) -> bool { UNIMPLEMENTED("TODO(P1): Add implementation."); }
+auto BufferPoolManager::FlushPage(page_id_t page_id) -> bool {
+  std::scoped_lock latch(*bpm_latch_);
+  if (page_table_.find(page_id) != page_table_.end()) return false;
+  auto frame = frames_[page_table_[page_id]];
+  if (frame->is_dirty_) {
+    disk_scheduler_->Schedule({true, frame->GetDataMut(), page_id, {}});
+  }
+  return true;
+}
 
 /**
  * @brief Flushes all page data that is in memory to disk unsafely.
